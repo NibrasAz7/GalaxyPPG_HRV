@@ -1,0 +1,87 @@
+# GalaxyPPG HRV Pipeline Configuration
+# All parameters used by the PPG/ECG processing pipeline.
+# Paths can be overridden via environment variables or CLI flags.
+
+dataset:
+  # Root directory of the GalaxyPPG dataset.
+  # Set via PPG_DATA_ROOT env var or --data-root CLI flag.
+  root: null
+  # Participant auto-detection: scans for P01-P24 folders under dataset.root
+  participants: "auto"
+
+devices:
+  E4:
+    fs: 64
+    bandpass: [0.5, 4.0]
+    filter_order: 4
+    peak_methods: ["neurokit2", "scipy", "ensemble"]
+    snr_threshold: 10.0
+    signal_col: "value"
+    motion_thresholds:
+      low: 0.08
+      moderate: 0.3
+      severe: 0.8
+
+  GalaxyWatch:
+    fs: 25
+    bandpass: [0.4, 3.5]
+    filter_order: 6
+    peak_methods: ["neurokit2", "scipy", "template", "ensemble"]
+    snr_threshold: 8.0
+    signal_col: "ppg"
+    motion_thresholds:
+      low: 0.05
+      moderate: 0.2
+      severe: 0.6
+
+  PolarH10:
+    fs: 130
+    bandpass: [0.05, 100.0]
+    filter_order: 4
+    peak_methods: ["neurokit2", "scipy"]
+    snr_threshold: 15.0
+    signal_col: "ecg"
+    motion_thresholds:
+      low: 0.1
+      moderate: 0.4
+      severe: 1.0
+
+processing:
+  # Sliding window parameters for rolling HR
+  window_beats: 15
+  overlap_ratio: 0.5
+  # IBI physiological range in milliseconds
+  ibi_range: [300, 2500]
+  # Ectopic beat detection: relative change threshold (fraction of preceding IBI)
+  ectopic_threshold: 0.25
+  # Peak matching rate tolerance in seconds
+  pmr_tolerance: 0.5
+  # Physiological peak validation range (bpm)
+  peak_bpm_range: [30, 160]
+  # Signal quality thresholds
+  min_snr_db: 3.0
+  min_kurtosis: 1.5
+  max_kurtosis: 6.0
+
+# Activity-specific heart rate bounds (bpm) for IBI filtering
+activity_hr_bounds:
+  baseline: [45, 110]
+  rest-1: [40, 100]
+  keyboard-typing: [50, 130]
+  walking: [70, 170]
+  jogging: [120, 200]
+  running: [140, 220]
+  default: [40, 200]
+
+# Activities to process (must match Event.csv session names)
+activities:
+  - baseline
+  - keyboard-typing
+  - rest-1
+  - walking
+  - jogging
+
+output:
+  results_dir: "./paper_results"
+  figures_dir: "./fig"
+  log_level: "INFO"

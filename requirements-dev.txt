@@ -1,0 +1,10 @@
+# GalaxyPPG HRV Pipeline — Development Dependencies
+# Install with: uv pip install -r requirements-dev.txt
+
+-r requirements.txt
+
+pytest>=8.0.0
+
+# External baselines (run_baselines.py)
+heartpy==1.2.7
+setuptools<81  # heartpy imports pkg_resources

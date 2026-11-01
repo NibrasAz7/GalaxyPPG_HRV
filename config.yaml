@@ -14,72 +14,297 @@ devices:
     fs: 64
     bandpass: [0.5, 4.0]
     filter_order: 4
-    peak_methods: ["neurokit2", "scipy", "ensemble"]
-    snr_threshold: 10.0
+    snr_threshold: 6.0
     signal_col: "value"
+    # Signal polarity: +1 = systolic peaks positive.  The E4 BVP is exported
+    # blood-volume oriented; the Galaxy Watch raw PPG is reflective (more blood
+    # = less light) and must be inverted (Park et al., 2025, Usage Notes).
+    # Fixed per device instead of a per-window heuristic, which inverted both
+    # devices; verified by the pulse-asymmetry check (pulse_rise_fraction).
+    polarity: 1
+    # Template-matching SQI: beats correlating < threshold with the median beat
+    # are discarded before artifact correction.
+    sqi_beat_threshold: 0.80
     motion_thresholds:
-      low: 0.08
-      moderate: 0.3
-      severe: 0.8
+      moderate: 0.30
+      severe: 0.80
 
   GalaxyWatch:
     fs: 25
     bandpass: [0.4, 3.5]
     filter_order: 6
-    peak_methods: ["neurokit2", "scipy", "template", "ensemble"]
-    snr_threshold: 8.0
+    snr_threshold: 5.0
     signal_col: "ppg"
+    polarity: -1
+    # 25 Hz pulses correlate less with their template: on the development
+    # split 0.70 raises seated-rest yield (+5 pp) and seated-task yield
+    # (+9 pp) at equal or lower RMSSD error (ablation sqi_0.70).
+    sqi_beat_threshold: 0.70
     motion_thresholds:
-      low: 0.05
-      moderate: 0.2
-      severe: 0.6
+      moderate: 0.20
+      severe: 0.60
 
   PolarH10:
     fs: 130
-    bandpass: [0.05, 100.0]
-    filter_order: 4
-    peak_methods: ["neurokit2", "scipy"]
-    snr_threshold: 15.0
+    # QRS-preserving band for R-peak detection (the previous 0.05-100 Hz band
+    # exceeded the 65 Hz Nyquist limit and was silently clamped).
+    bandpass: [0.5, 40.0]
+    filter_order: 2
+    snr_threshold: 8.0
     signal_col: "ecg"
+    # No template SQI screen for the reference ECG: QRS amplitude varies with
+    # respiration, so correctly detected beats can correlate poorly with the
+    # median beat.  Reference validity is checked against the Polar firmware
+    # R-R values instead (reference_* columns).
+    sqi_beat_threshold: null
     motion_thresholds:
-      low: 0.1
-      moderate: 0.4
-      severe: 1.0
+      moderate: 0.40
+      severe: 1.00
 
 processing:
-  # Sliding window parameters for rolling HR
-  window_beats: 15
-  overlap_ratio: 0.5
-  # IBI physiological range in milliseconds
-  ibi_range: [300, 2500]
-  # Ectopic beat detection: relative change threshold (fraction of preceding IBI)
-  ectopic_threshold: 0.25
-  # Peak matching rate tolerance in seconds
-  pmr_tolerance: 0.5
-  # Physiological peak validation range (bpm)
-  peak_bpm_range: [30, 160]
-  # Signal quality thresholds
-  min_snr_db: 3.0
-  min_kurtosis: 1.5
-  max_kurtosis: 6.0
+  # Device-reported IBI validity range in milliseconds (30-200 bpm).
+  ibi_range: [300, 2000]
+  # Beat recovery during artifact correction: a missed / ectopic beat is first
+  # searched for in the signal (pulse correlating >= min_correlation with the
+  # recording's median beat; null = the device's beat-SQI threshold) before
+  # falling back to an interpolated midpoint.  Only interpolated beats count
+  # towards the correction burden and they are excluded from
+  # successive-difference indices (RMSSD, pNN50, SD1).
+  # Beat timing: detected beats are re-localised on a wide-band signal
+  # (device low cut .. highcut_hz, order 2) within +-search_s.  The narrow
+  # detection band smears the pulse apex; on the development split the RMSSD
+  # ratio over matched beats improves from 1.22 to 1.13 (E4) and 1.31 to 1.25
+  # (Galaxy Watch) with a plateau above 8 Hz (timing study).
+  timing:
+    # Beats are detected as pulse onsets (detectors applied to the inverted
+    # pulse: the onset is a sharp corner, the systolic apex is often rounded
+    # or double-humped) and timed at the intersecting-tangents foot of each
+    # pulse.  Development split, all seated-rest sessions (fiducial study):
+    # onset anchor + tangent = E4 timing SD 10.3 ms, beat IBI MAE 6.7 ms,
+    # RMSSD ratio 1.14; systolic-peak anchor + peak = 18.0 ms, 12.5 ms, 1.34.
+    anchor: onset
+    fiducial: tangent
+    enabled: true
+    highcut_hz: {E4: 10.0, GalaxyWatch: 8.0}
+    order: 2
+    search_s: 0.12
+    # Low motion only: under motion the wide band admits motion peaks
+    # (development split: locomotion beat F1 49.9 -> 53.5 % for E4 when the
+    # refinement is restricted to low motion; rest results identical).
+    motion_states: ["low"]
+  beat_recovery:
+    enabled: true
+    min_correlation: null
+    exclude_from_differences: true
+  # Artifact detection: an interval is flagged when it deviates from the
+  # local rolling median by more than these factors (missed or extra peak).
+  missed_beat_factor: 1.5
+  extra_beat_factor: 0.6
+  median_window_beats: 11
+  # Cumulative duration of consecutive invalid intervals above which the run
+  # is treated as a signal gap and is not bridged by interpolation.
+  gap_threshold_ms: 3000.0
+  # Rhythm-constrained peak selection: choose the candidate-peak subset that
+  # follows the expected cardiac interval (prior from the device HR or from
+  # harmonic summation of the spectrum).  Resolves missed and spurious beats.
+  rhythm_tracking:
+    enabled: true
+    # Prior for the expected cardiac interval. "device" uses the device-reported
+    # HR (skipping the stage when it is missing or implausible); "hps" uses
+    # harmonic summation of the spectrum and "auto" prefers the device estimate
+    # with an HPS fallback (both were found unreliable under motion).
+    prior: "device"
+    # Rhythm tracking is skipped under severe motion because the
+    # device-reported HR prior is itself unreliable there: on the tuning
+    # subset, device HR deviates from ECG by 43-48 bpm during jogging (e.g.
+    # P04: device 88.6 bpm vs ECG 153.9 bpm).  Extending tracking to severe
+    # motion changed jogging HR MAE only from 51.8 to 46.6 bpm (GalaxyWatch
+    # 56.7 -> 43.1, E4 46.9 -> 50.2), so the standalone detector remains the
+    # only non-circular HRV source.
+    motion_states: ["low", "moderate"]
+    tolerance: 0.30
+    penalty_weight: 1.0
+    max_interval_factor: 2.5
+    amplitude_weight: 1.0
+  # NeuroKit2 input signal.  Feeding NeuroKit2 the raw (unfiltered) E4
+  # signal under severe motion was adopted on the full cohort with the old
+  # +-500 ms unaligned matching.  Re-evaluated on the development split with
+  # the beat-level validation it is harmful (E4 severe NeuroKit2 F1 20.3 %
+  # with the gate vs 24.4 % without; run_method_selection.py), so disabled.
+  neurokit2_raw:
+    enabled: false
+    devices: ["E4"]
+    motion_states: ["severe"]
+  # Standalone spectral heart-rate estimate for locomotion.  Under severe
+  # motion the plain detectors systematically miss every other beat while the
+  # device HR is itself unreliable; this path derives the rhythm prior from
+  # harmonic summation of an accelerometer-cleaned copy of the PPG and reports
+  # ``hr_spectral`` (with interval completion, like ``hr_tracked``).  It is
+  # standalone and non-circular, but it is NOT used for HRV: interval
+  # completion inserts model-derived beats.
+  #
+  # Device-gated: Empatica E4 (64 Hz) benefits (E4 severe-motion HR error
+  # 46.9 -> 14.9 bpm on the 6-participant tuning subset and 51.7 -> 34.5 bpm
+  # over the full 23-participant cohort, with 11/23 within 8 bpm); the
+  # remaining failures lock onto half rate.  Galaxy Watch 5 (25 Hz) is
+  # disabled because its motion-locked spectrum makes the prior confidently
+  # wrong.
+  spectral_rhythm:
+    enabled: true
+    devices: ["E4"]
+    motion_states: ["severe"]
+    prior: "hps"
+  # Accelerometer-referenced adaptive noise cancellation (normalised LMS),
+  # applied in the listed motion states to the listed devices.
+  #
+  # Development-split ablation (run_ablation.py): E4 locomotion beat F1
+  # 48.6 -> 57.3 % and HR MAE 24.6 -> 15.4 bpm; Galaxy Watch F1 43.5 -> 26.9 %
+  # (harmful: at 25 Hz the reference band aliases the step harmonics), rest
+  # unchanged.  Enabled for the E4 only.  (The former conclusion that ANC is
+  # ineffective was based on +-500 ms unaligned matching.)
+  anc:
+    enabled: true
+    devices: ["E4"]
+    order: 32
+    mu: 0.02
+    delay_ms: 0.0
+    reference_band: [0.4, 5.0]
+    motion_states: ["moderate", "severe"]
 
-# Activity-specific heart rate bounds (bpm) for IBI filtering
-activity_hr_bounds:
-  baseline: [45, 110]
-  rest-1: [40, 100]
-  keyboard-typing: [50, 130]
-  walking: [70, 170]
-  jogging: [120, 200]
-  running: [140, 220]
-  default: [40, 200]
+# Beat detection.  The priority table selects which detector's output feeds
+# the HRV stage per device and accelerometer motion state; it depends on no
+# protocol labels and was selected on the development participants only
+# (run_method_selection.py --split dev).
+detection:
+  ensemble_tolerance_ms: 100.0
+  # Distinct detectors required to confirm a consensus beat (null = max(2, ceil(k/2))).
+  ensemble_min_votes: null
+  # Derived by run_method_selection.py on the development split (ranked by
+  # beat-level F1 vs ECG; ties broken by beat-IBI MAE).
+  priority:
+    PolarH10:
+      low: ["neurokit2", "scipy"]
+      moderate: ["neurokit2", "scipy"]
+      severe: ["neurokit2", "scipy"]
+    E4:
+      low: ["neurokit2", "scipy", "ensemble"]
+      moderate: ["neurokit2", "scipy", "ensemble"]
+      severe: ["slope", "ensemble", "neurokit2", "scipy", "template"]
+    GalaxyWatch:
+      low: ["scipy", "neurokit2", "ensemble"]
+      moderate: ["scipy", "neurokit2", "ensemble"]
+      severe: ["slope", "ensemble", "neurokit2", "scipy", "template"]
+
+# Validation against the ECG reference.
+validation:
+  # Beat matching tolerance after removing the per-recording PPG-ECG delay
+  # (pulse arrival time + residual clock error).  Must stay well below half an
+  # inter-beat interval (167 ms at 180 bpm); the previous +-500 ms window
+  # matched any beat train at the right rate regardless of phase.
+  match_tolerance_s: 0.10
+  # Search range of the beat cross-correlogram used to estimate the delay.
+  max_lag_s: 1.0
+  # Windows whose correlogram peak exceeds this prominence (peak / median
+  # background) anchor the delay; other windows search only within
+  # min(anchor_halfwidth_s, 0.4 x IBI) of the delay interpolated between
+  # anchors, preventing noise-fitted delays and one-beat slips.
+  anchor_prominence: 10.0
+  anchor_halfwidth_s: 0.25
+  # Session clock synchronisation from accelerometer activity envelopes.
+  clock_sync_max_lag_s: 120.0
+  clock_sync_min_correlation: 0.3
+  # Local refinement around each activity window (device clocks drift and
+  # are re-synchronised mid-session): context and search range in seconds.
+  local_sync_context_s: 300.0
+  local_sync_search_s: 10.0
+  # A local estimate is kept when at least local_sync_min_support other
+  # windows of the participant agree with it within local_sync_tolerance_s
+  # (a real mid-session clock step is supported by all later windows, a
+  # mis-lock is isolated); other windows use the nearest accepted window.
+  local_sync_tolerance_s: 1.0
+  local_sync_min_support: 2
+  # false = use the session offset for every window (ablation only)
+  local_sync_enabled: true
+
+# Evaluation design.  All tuning (detector priority, gates, thresholds, ANC)
+# uses the development participants only; primary results are reported on
+# the untouched test participants (the same split as learning/: P17-P19
+# validation + P20-P24 test of the learned detector are all test here).
+evaluation:
+  dev_participants: [P02, P03, P04, P05, P06, P07, P08, P09, P10, P11, P12, P13, P14, P15, P16]
+  test_participants: [P17, P18, P19, P20, P21, P22, P23, P24]
+
+# HRV index computation settings.
+hrv:
+  # Minimum requirements for retaining an NN segment.
+  min_segment_duration_s: 30.0
+  min_segment_beats: 20
+  # Maximum correction burden (Lipponen-Tarvainen corrected + residual
+  # interpolated intervals) per segment; 5 % follows common Kubios practice.
+  max_interpolated_fraction: 0.05
+  # Interpolation family for residual invalid intervals.
+  interpolation_method: "linear"
+  # Minimum mean template-matching SQI per segment (Orphanidou et al., 2015).
+  min_segment_sqi: 0.86
+  # Rhythm-consistency gate (segment HR / spectral HR of the same PPG within
+  # rhythm_ratio_range).  Disabled: on the development split it rejected
+  # valid resting E4 windows (yield 75 -> 68 %) without catching any segment
+  # that the cadence-lock gate below does not already reject.
+  rhythm_gate: false
+  rhythm_ratio_range: [0.67, 1.5]
+  # Cadence-lock gate: under periodic motion (accelerometer spectral
+  # concentration >= min_concentration) a segment whose HR lies within
+  # +-tolerance of k x the dominant accelerometer frequency is rejected as
+  # locked onto the step / arm-swing artifact.  Development split: rest and
+  # typing <= 0.25, walking and jogging >= 0.32.
+  cadence_lock:
+    enabled: true
+    min_concentration: 0.30
+    tolerance: 0.08
+    multiples: [0.5, 1.0, 2.0]
+  # Device-HR consistency gate.  Disabled: it conditions acceptance on the
+  # vendor's own algorithm (same sensor), which is circular.
+  device_hr_gate: false
+  # Maximum percentage of successive NN differences exceeding 20 % of the
+  # median NN; segments above this residual-jitter level are rejected.
+  max_jitter_percent: 15.0
+  # Tolerance of the (disabled) device-HR gate.
+  max_hr_deviation_percent: 25.0
+  # Duration gates for spectral indices (the VLF band requires >= 5 min and
+  # is therefore not reported for this protocol).
+  min_hf_duration_s: 60.0
+  min_lf_duration_s: 120.0
+  # Uniform tachogram resampling rate and fixed Welch window length.
+  resample_hz: 4.0
+  welch_window_s: 64.0
+  # Approximate entropy parameters.
+  apen_m: 2
+  apen_r_factor: 0.2
 
 # Activities to process (must match Event.csv session names)
+# All annotated protocol sessions (Park et al., 2025, Fig. 3).  Labels are
+# used only to report results by condition; processing never depends on them.
 activities:
+  - adaptation
   - baseline
+  - tsst-prep
+  - tsst-speech
+  - meditation-1
+  - screen-reading
+  - ssst-prep
+  - ssst-sing
+  - meditation-2
   - keyboard-typing
   - rest-1
+  - mobile-typing
+  - rest-2
+  - standing
+  - rest-3
   - walking
+  - rest-4
   - jogging
+  - rest-5
+  - running
 
 output:
   results_dir: "./paper_results"

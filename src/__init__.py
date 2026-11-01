@@ -8,7 +8,9 @@ paper.  Each module handles one stage of the processing chain:
 - :mod:`signal_processing`— bandpass filtering and signal quality metrics
 - :mod:`motion_detection` — accelerometer-based motion classification
 - :mod:`peak_detection`   — multi-method systolic peak detection and ensemble
-- :mod:`hrv_metrics`      — IBI artifact correction and HRV index computation
-- :mod:`validation`       — ECG ground-truth comparison (PMR, Bland-Altman)
-- :mod:`utils`            — shared helpers (config loading, HR bounds, filters)
+- :mod:`hrv_metrics`      — artifact correction, gap-aware segmentation, HRV indices
+- :mod:`validation`       — ECG ground-truth comparison (peak matching, Bland-Altman)
+- :mod:`utils`            — shared helpers (configuration loading)
 """
+
+__version__ = "2.5.0"

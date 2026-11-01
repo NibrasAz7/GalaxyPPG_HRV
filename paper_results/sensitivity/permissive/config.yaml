@@ -1,0 +1,81 @@
+dataset:
+  root: null
+  participants: auto
+devices:
+  E4:
+    fs: 64
+    bandpass:
+    - 0.5
+    - 4.0
+    filter_order: 4
+    peak_methods:
+    - neurokit2
+    - scipy
+    - ensemble
+    snr_threshold: 6.0
+    signal_col: value
+    motion_thresholds:
+      moderate: 0.3
+      severe: 0.8
+  GalaxyWatch:
+    fs: 25
+    bandpass:
+    - 0.4
+    - 3.5
+    filter_order: 6
+    peak_methods:
+    - neurokit2
+    - scipy
+    - template
+    - ensemble
+    snr_threshold: 5.0
+    signal_col: ppg
+    motion_thresholds:
+      moderate: 0.2
+      severe: 0.6
+  PolarH10:
+    fs: 130
+    bandpass:
+    - 0.05
+    - 100.0
+    filter_order: 4
+    peak_methods:
+    - neurokit2
+    - scipy
+    snr_threshold: 8.0
+    signal_col: ecg
+    motion_thresholds:
+      moderate: 0.4
+      severe: 1.0
+processing:
+  ibi_range:
+  - 300
+  - 2000
+  missed_beat_factor: 1.5
+  extra_beat_factor: 0.6
+  median_window_beats: 11
+  gap_threshold_ms: 3000.0
+  pmr_tolerance: 0.5
+  ensemble_tolerance_ms: 100.0
+  min_snr_db: 3.0
+hrv:
+  min_segment_duration_s: 30.0
+  min_segment_beats: 20
+  max_interpolated_fraction: 0.4
+  max_jitter_percent: 25.0
+  max_hr_deviation_percent: 25.0
+  min_hf_duration_s: 60.0
+  min_lf_duration_s: 120.0
+  resample_hz: 4.0
+  apen_m: 2
+  apen_r_factor: 0.2
+activities:
+- baseline
+- keyboard-typing
+- rest-1
+- walking
+- jogging
+output:
+  results_dir: paper_results/sensitivity/permissive/results
+  figures_dir: ./fig
+  log_level: INFO

@@ -18,12 +18,14 @@ import json
 import logging
 import os
 from datetime import timedelta
-from typing import Dict
 
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Value written by the Galaxy Watch 5 PPG stream at optical-gain resets (2**21).
+GALAXY_PPG_SENTINEL = 2097152
 
 
 def convert_timestamp(ts, device: str) -> pd.Timestamp:
@@ -52,7 +54,37 @@ def convert_timestamp(ts, device: str) -> pd.Timestamp:
         return pd.to_datetime(ts, unit="ms")
 
 
-def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
+def convert_timestamps(values: pd.Series, device: str) -> pd.DatetimeIndex:
+    """Vectorised :func:`convert_timestamp` for a whole column."""
+    numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype="float64")
+    if device == "E4":
+        out = pd.to_datetime(np.round(numeric).astype("int64"), unit="us")
+    else:
+        out = pd.to_datetime(np.round(numeric).astype("int64"), unit="ms")
+        if device == "PolarH10":
+            out = out - pd.Timedelta(hours=9)
+    return pd.DatetimeIndex(out)
+
+
+def _sort_by_time(df: pd.DataFrame) -> pd.DataFrame:
+    """Sort a time-indexed frame and drop duplicate timestamps.
+
+    Real device exports occasionally interleave rows or repeat timestamps,
+    which breaks label-based slicing (``df[start:end]``) and interpolation
+    helpers.  Sorting on load keeps every downstream stage monotonic.
+
+    Args:
+        df: DataFrame indexed by datetime.
+
+    Returns:
+        Chronologically sorted DataFrame without duplicated timestamps.
+    """
+    if df.index.has_duplicates:
+        df = df[~df.index.duplicated(keep="first")]
+    return df.sort_index()
+
+
+def load_device_data(user_folder: str, device: str, config: dict) -> dict:
     """Load all available data for one device from a participant folder.
 
     Reads signal (PPG/ECG), HR, IBI, and accelerometer CSVs, converting
@@ -67,8 +99,7 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
         Dictionary with keys ``"signal"``, ``"hr"``, ``"hr_full"``, ``"ibi"``,
         ``"acc"`` (each a ``pd.DataFrame`` or empty if the file is missing).
     """
-    data: Dict = {"device": device}
-    ibi_range = config["processing"]["ibi_range"]
+    data: dict = {"device": device}
 
     # --- Signal (PPG / ECG) ---
     if device == "E4":
@@ -85,9 +116,17 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
         if ts_col not in signal_df.columns:
             logger.warning("%s: no timestamp column in signal file (columns: %s)", device, signal_df.columns.tolist())
         else:
-            signal_df["datetime"] = signal_df[ts_col].apply(lambda x: convert_timestamp(x, device))
+            signal_df["datetime"] = convert_timestamps(signal_df[ts_col], device)
             signal_df.set_index("datetime", inplace=True)
-            data["signal"] = signal_df
+            if device == "GalaxyWatch" and "ppg" in signal_df.columns:
+                # Samples flagged by the watch (status != 0, e.g. -999) and the
+                # 2**21 sentinel written at every optical-gain reset are not
+                # physiological; they are set to NaN and repaired downstream.
+                bad = signal_df["ppg"] == GALAXY_PPG_SENTINEL
+                if "status" in signal_df.columns:
+                    bad |= signal_df["status"] != 0
+                signal_df["ppg"] = signal_df["ppg"].astype(float).mask(bad)
+            data["signal"] = _sort_by_time(signal_df)
             logger.debug("%s: signal loaded — %d samples", device, len(signal_df))
 
     # --- Heart rate ---
@@ -98,8 +137,9 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
         hr_col = "hr" if device != "E4" else "value"
 
         if ts_col in hr_df.columns:
-            hr_df["datetime"] = hr_df[ts_col].apply(lambda x: convert_timestamp(x, device))
+            hr_df["datetime"] = convert_timestamps(hr_df[ts_col], device)
             hr_df.set_index("datetime", inplace=True)
+            hr_df = _sort_by_time(hr_df)
             hr_series = hr_df[hr_col][(hr_df[hr_col] > 0) & (hr_df[hr_col] < 300)]
             data["hr"] = hr_series.to_frame("hr")
             data["hr_full"] = hr_df
@@ -109,11 +149,10 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
     if device == "GalaxyWatch":
         # Galaxy Watch stores IBI arrays inside HR.csv
         if "hr_full" in data and not data["hr_full"].empty:
-            ibi_sample = data["hr_full"]["ibi"].dropna().head(10)
-            has_ibi = any(
-                isinstance(v, str) and v != "[]" and len(v) > 2
-                for v in ibi_sample
-            )
+            ibi_column = data["hr_full"]["ibi"].dropna().astype(str)
+            # Leading rows are typically empty ("[]") while the sensor settles,
+            # so the whole column must be inspected.
+            has_ibi = bool((ibi_column.str.len() > 2).any())
             data["ibi"] = data["hr_full"] if has_ibi else pd.DataFrame()
         else:
             data["ibi"] = pd.DataFrame()
@@ -124,9 +163,9 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
             ibi_df = pd.read_csv(ibi_path)
             ts_col = "phoneTimestamp" if device == "PolarH10" and "phoneTimestamp" in ibi_df.columns else "timestamp"
             if ts_col in ibi_df.columns:
-                ibi_df["datetime"] = ibi_df[ts_col].apply(lambda x: convert_timestamp(x, device))
+                ibi_df["datetime"] = convert_timestamps(ibi_df[ts_col], device)
                 ibi_df.set_index("datetime", inplace=True)
-                data["ibi"] = ibi_df
+                data["ibi"] = _sort_by_time(ibi_df)
             else:
                 data["ibi"] = pd.DataFrame()
         else:
@@ -154,7 +193,7 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
                 ts_col = "phoneTimestamp" if "phoneTimestamp" in acc_df.columns else "sensorTimestamp"
 
             if ts_col in acc_df.columns:
-                acc_df["datetime"] = acc_df[ts_col].apply(lambda x: convert_timestamp(x, device))
+                acc_df["datetime"] = convert_timestamps(acc_df[ts_col], device)
                 acc_df.set_index("datetime", inplace=True)
 
                 # Convert raw accelerometer values to g-force
@@ -168,7 +207,7 @@ def load_device_data(user_folder: str, device: str, config: dict) -> Dict:
                 acc_df["acc_x_g"] = acc_df[x_col] / scale
                 acc_df["acc_y_g"] = acc_df[y_col] / scale
                 acc_df["acc_z_g"] = acc_df[z_col] / scale
-                data["acc"] = acc_df
+                data["acc"] = _sort_by_time(acc_df)
                 logger.debug("%s: ACC loaded — %d samples", device, len(acc_df))
 
     # --- Galaxy Watch quality gating ---
@@ -212,7 +251,14 @@ def extract_device_ibis(
         return np.array([]), np.array([])
 
     ibi_range = config["processing"]["ibi_range"]
-    segment = ibi_df.loc[(ibi_df.index >= start_time) & (ibi_df.index <= end_time)]
+    if device == "GalaxyWatch":
+        # A batch row is stamped at its first beat and can span many minutes,
+        # so rows starting well before the window are expanded and the
+        # individual beat times filtered afterwards.
+        lookback = pd.Timedelta(minutes=20)
+        segment = ibi_df.loc[(ibi_df.index >= start_time - lookback) & (ibi_df.index <= end_time)]
+    else:
+        segment = ibi_df.loc[(ibi_df.index >= start_time) & (ibi_df.index <= end_time)]
 
     if segment.empty:
         logger.debug("%s IBI: no data in time segment", device)
@@ -223,18 +269,17 @@ def extract_device_ibis(
 
     if device == "E4":
         if "duration" in segment.columns:
-            durations = segment["duration"].values
-            valid = durations[(durations > 400_000) & (durations < 2_500_000)]
-            ibi_values = (valid / 1000.0).tolist()
+            durations_us = segment["duration"].astype(float).values
+            mask = (durations_us >= ibi_range[0] * 1000.0) & (
+                durations_us <= ibi_range[1] * 1000.0
+            )
+            ibi_values = (durations_us[mask] / 1000.0).tolist()
 
-            if len(valid) > 0:
-                dur_us = segment["duration"].astype(float).values
-                mask = (dur_us > 400_000) & (dur_us < 2_500_000)
-                ts_ns = segment.index.view("int64")[mask]
-                beat_ns = ts_ns + (dur_us[mask] * 1000.0).astype(np.int64)
-                ibi_times = pd.to_datetime(beat_ns)
-            else:
-                ibi_times = segment.index.values[: len(ibi_values)]
+            if len(ibi_values) > 0:
+                # E4 IBI.csv stamps the END of each interval (consecutive rows
+                # differ by the duration of the later row), so the timestamp
+                # itself is the beat time.
+                ibi_times = segment.index[mask]
 
     elif device == "GalaxyWatch":
         if "ibi" in segment.columns:
@@ -249,30 +294,34 @@ def extract_device_ibis(
                 if parsed_ibis is None:
                     continue
 
+                # IBIs are delivered in batches: the row timestamp marks the
+                # beat that opens the first interval and the list runs forward
+                # (dataReceived - timestamp ~ sum of the batch).  Interval i
+                # therefore ends at timestamp + cumsum(ibis)[i].
+                ends = timestamp + pd.to_timedelta(np.cumsum(np.asarray(parsed_ibis, dtype=float)), unit="ms")
                 for i_val, v in enumerate(parsed_ibis):
                     # Keep only status == 0 (valid) when statuses are available
                     if parsed_statuses is not None and i_val < len(parsed_statuses):
                         if parsed_statuses[i_val] != 0:
                             continue
-                    if ibi_range[0] <= v <= ibi_range[1]:
+                    if ibi_range[0] <= v <= ibi_range[1] and start_time <= ends[i_val] <= end_time:
                         ibi_values.append(v)
-                        ibi_times.append(timestamp)
+                        ibi_times.append(ends[i_val])
 
     elif device == "PolarH10":
         if "duration" in segment.columns:
-            durations = segment["duration"].values
-            valid = durations[(durations >= ibi_range[0]) & (durations <= ibi_range[1])]
-            ibi_values = valid.tolist()
-            ibi_times = segment.index.values[: len(ibi_values)]
+            durations = segment["duration"].astype(float).values
+            mask = (durations >= ibi_range[0]) & (durations <= ibi_range[1])
+            ibi_values = durations[mask].tolist()
+            # Polar IBI.csv timestamps are synthetic: consecutive rows
+            # accumulate the durations and are periodically re-anchored to the
+            # BLE arrival time (jumps of hundreds of ms, sometimes backwards).
+            # They are only approximate beat times; the durations are exact and
+            # are compared with the ECG by value alignment.
+            ibi_times = segment.index[mask]
 
     final_ibis = np.array(ibi_values, dtype=float)
     final_times = np.array(ibi_times)
-
-    # Looser validation for Galaxy Watch to retain noisy data for metrics
-    if device == "GalaxyWatch" and len(final_ibis) > 0:
-        valid = (final_ibis > 250) & (final_ibis < 2500)
-        final_ibis = final_ibis[valid]
-        final_times = final_times[valid]
 
     logger.debug("%s IBI: %d intervals extracted", device, len(final_ibis))
     return final_ibis, final_times

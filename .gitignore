@@ -1,9 +1,50 @@
+# ---------------------------------------------------------------------------
+# Data: the GalaxyPPG dataset is NOT redistributed here. Download it from
+# https://doi.org/10.1038/s41597-025-05152-z and place it in Dataset/
+# ---------------------------------------------------------------------------
+Dataset/
+data/
+
+# ---------------------------------------------------------------------------
+# Python environments, caches, tooling
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+learning/.venv/
 __pycache__/
 *.pyc
 *.pyo
-.venv/
-venv/
-paper_results/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.kilo/
+.vscode/
+.idea/
+.DS_Store
 logs/
-*.csv
-!config.yaml
+
+# ---------------------------------------------------------------------------
+# Results: the per-window results, the derived tables and the figures that
+# the manuscript is generated from ARE tracked (paper_results/, fig/).
+# Only regenerable caches and bulky per-window ablation re-runs are excluded
+# (./run_all.sh recreates them in about five minutes).
+# ---------------------------------------------------------------------------
+paper_results/cache/
+paper_results/ablation/*.csv
+!paper_results/ablation_summary.csv
+*.pkl
+*.npz
+*.pt
+
+# Learned beat detector (separate study): code only, no caches or runs
+learning/cache/
+learning/runs/
+
+# Superseded result sets kept locally for reference
+paper_results_v1_archive/
+fig_v1_archive/
+/fig
+
+# EPS -> PDF conversions produced by LaTeX builds
+*-eps-converted-to.pdf

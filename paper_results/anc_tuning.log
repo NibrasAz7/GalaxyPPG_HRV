@@ -1,0 +1,28 @@
+2026-09-16 15:23:32,375 [INFO] __main__: Building cache for 6 participants
+2026-09-16 15:30:58,649 [INFO] __main__: Cache: 12 tuning recordings, 24 validation recordings
+2026-09-16 15:30:58,690 [INFO] __main__: stage=mu off          {'n': 12, 'hr_mae': 32.143266631290295, 'recall': 65.05957475542088, 'timing_ms': 139.67350833333302}
+2026-09-16 15:30:58,837 [INFO] __main__: stage=mu mu=0.002     {'n': 12, 'hr_mae': 31.200418877841376, 'recall': 64.84371859430608, 'timing_ms': 147.81901895833295}
+2026-09-16 15:30:58,977 [INFO] __main__: stage=mu mu=0.005     {'n': 12, 'hr_mae': 29.329540632337665, 'recall': 67.89774794880111, 'timing_ms': 148.15403070833307}
+2026-09-16 15:30:59,138 [INFO] __main__: stage=mu mu=0.01      {'n': 12, 'hr_mae': 29.804360043764856, 'recall': 67.3786557959715, 'timing_ms': 148.07090220833211}
+2026-09-16 15:30:59,279 [INFO] __main__: stage=mu mu=0.02      {'n': 12, 'hr_mae': 28.732394206896476, 'recall': 68.37038604714913, 'timing_ms': 146.28397416666692}
+2026-09-16 15:30:59,418 [INFO] __main__: stage=mu mu=0.05      {'n': 12, 'hr_mae': 30.171574375160798, 'recall': 68.46894016893323, 'timing_ms': 145.12921166666644}
+2026-09-16 15:30:59,423 [INFO] __main__: Best step size: mu=0.02
+2026-09-16 15:30:59,557 [INFO] __main__: stage=order order=8      {'n': 12, 'hr_mae': 30.28319352754187, 'recall': 67.37634242269012, 'timing_ms': 140.9598306666676}
+2026-09-16 15:30:59,702 [INFO] __main__: stage=order order=16     {'n': 12, 'hr_mae': 32.40608145230747, 'recall': 64.68449311351871, 'timing_ms': 144.8326275833331}
+2026-09-16 15:30:59,842 [INFO] __main__: stage=order order=32     {'n': 12, 'hr_mae': 28.732394206896476, 'recall': 68.37038604714913, 'timing_ms': 146.28397416666692}
+2026-09-16 15:31:00,009 [INFO] __main__: stage=order order=64     {'n': 12, 'hr_mae': 29.14304936450746, 'recall': 66.89587374570631, 'timing_ms': 147.8152106250001}
+2026-09-16 15:31:00,009 [INFO] __main__: Best order: 32
+2026-09-16 15:31:00,151 [INFO] __main__: stage=delay delay=0.0    {'n': 12, 'hr_mae': 28.732394206896476, 'recall': 68.37038604714913, 'timing_ms': 146.28397416666692}
+2026-09-16 15:31:00,295 [INFO] __main__: stage=delay delay=40.0   {'n': 12, 'hr_mae': 30.131576596134014, 'recall': 68.42313726065343, 'timing_ms': 142.9655635416663}
+2026-09-16 15:31:00,437 [INFO] __main__: stage=delay delay=80.0   {'n': 12, 'hr_mae': 30.53142030086352, 'recall': 68.12274966375422, 'timing_ms': 144.2419203333337}
+2026-09-16 15:31:00,595 [INFO] __main__: stage=delay delay=150.0  {'n': 12, 'hr_mae': 29.26721212287022, 'recall': 67.84483336855635, 'timing_ms': 142.0836146249999}
+2026-09-16 15:31:00,740 [INFO] __main__: stage=delay delay=250.0  {'n': 12, 'hr_mae': 29.749109894274255, 'recall': 67.88432783933044, 'timing_ms': 143.3626039583348}
+2026-09-16 15:31:00,741 [INFO] __main__: Best delay: 0 ms
+2026-09-16 15:31:01,287 [INFO] __main__: Wrote tuning results → paper_results/anc_tuning.csv
+             stage                  candidate  n    hr_mae    recall  timing_ms
+validation:walking                        off 12 32.143267 65.059575 139.673508
+validation:walking mu=0.02,order=32,delay=0.0 12 28.732394 68.370386 146.283974
+validation:jogging                        off 12 51.795730 64.505008 108.030083
+validation:jogging mu=0.02,order=32,delay=0.0 12 47.118817 58.490215 118.528096
+
+Suggested config: anc: enabled: true, mu: 0.02, order: 32, delay_ms: 0.0
